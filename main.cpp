@@ -20,8 +20,6 @@ static inline string trim(const string& s){
     return s.substr(a, b - a + 1);
 }
 static inline char toU(char c){ return (char)toupper((unsigned char)c); }
-
-// --- helpers extra para paso 4/5 ---
 static inline string only_AA(const string& s){
     string t; t.reserve(s.size());
     for(char c: s){
@@ -41,10 +39,7 @@ static inline bool is_digits(const string& s){
 }
 
 // =============== estructuras ===============
-struct ProteinItem {
-    string name;   // p.ej. "Spike_S1"
-    string aa;     // secuencia AA (A-Z y *)
-};
+struct ProteinItem { string name; string aa; };
 
 struct Data {
     string genome_wuhan;
@@ -52,28 +47,22 @@ struct Data {
     string gene_M;
     string gene_ORF1ab;
     string gene_S;
-    vector<ProteinItem> proteins;  
+    vector<ProteinItem> proteins;
 } DB;
 
 // =============== paths/utilidades ===============
 static string path_join(const string& base, const string& file){
-    std::filesystem::path p(base);
-    p /= file;
-    return p.string();
+    std::filesystem::path p(base); p /= file; return p.string();
 }
-
-// Si el archivo no existe como "nombre", probamos "nombre.txt".
 static string existing_file(const string& base, const string& nameNoExt){
     string p1 = path_join(base, nameNoExt);
     if (std::filesystem::exists(p1)) return p1;
     string p2 = path_join(base, nameNoExt + ".txt");
     if (std::filesystem::exists(p2)) return p2;
-    // Devolvemos p1 para que el lector lance un error informativo
-    return p1;
+    return p1; // deja que el lector lance error informativo
 }
 
 // =============== lectores FASTA ===============
-// DNA: ignora cabeceras '>' y limpia a A/C/G/T en mayúsculas
 string read_fasta_dna_clean(const string& path){
     ifstream in(path);
     if(!in) throw runtime_error("No pude abrir: " + path);
@@ -87,30 +76,22 @@ string read_fasta_dna_clean(const string& path){
     }
     return seq;
 }
-
-// Proteínas: múltiples entradas con '>' nombre y secuencia multi-línea
 vector<ProteinItem> read_protein_fasta(const string& path){
     ifstream in(path);
     if(!in) throw runtime_error("No pude abrir: " + path);
-
     vector<ProteinItem> items;
     string line, current_name, current_seq;
-
     auto push_current = [&](){
         if(!current_name.empty() && !current_seq.empty()){
             items.push_back({current_name, current_seq});
         }
-        current_name.clear();
-        current_seq.clear();
+        current_name.clear(); current_seq.clear();
     };
-
     while(getline(in, line)){
         string s = trim(line);
         if(s.empty()) continue;
-
         if(s[0]=='>'){
-            // corta uno o más '>' y toma hasta el primer espacio como nombre
-            size_t i = 0; while(i<s.size() && s[i]=='>') ++i;
+            size_t i=0; while(i<s.size() && s[i]=='>') ++i;
             string header = trim(s.substr(i));
             if(header.empty()){
                 header = "unnamed_" + to_string(items.size()+1);
@@ -133,7 +114,6 @@ vector<ProteinItem> read_protein_fasta(const string& path){
 
 // =============== carga completa ===============
 void load_all(const string& BASE){
-    // Usa nombres SIN extensión; existing_file probará con y sin ".txt"
     DB.genome_wuhan = read_fasta_dna_clean(existing_file(BASE, "SARS-COV-2-MN908947.3"));
     DB.genome_texas = read_fasta_dna_clean(existing_file(BASE, "SARS-COV-2-MT106054.1"));
     DB.gene_M       = read_fasta_dna_clean(existing_file(BASE, "gen-M"));
@@ -142,79 +122,74 @@ void load_all(const string& BASE){
     DB.proteins     = read_protein_fasta(existing_file(BASE, "seq-proteins"));
 }
 
-
-//=============Busqueda Naive 
+//============= Búsqueda Naive (propia) =============
 inline bool match_at (const string& text, size_t i, const string& pattern){
-    if (i + pattern.size() > text.size()){
-        return false;
-    }
-    for(size_t k{0}; k < pattern.size(); ++k){
-        if(text[i + k] != pattern[k]){
-            return false;
-        }
+    if (i + pattern.size() > text.size()) return false;
+    for(size_t k=0; k<pattern.size(); ++k){
+        if(text[i + k] != pattern[k]) return false;
     }
     return true;
 }
-
 vector<size_t> naive_search_all(const string& text, const string& pattern){
     vector<size_t> pos;
-    if(pattern.empty() || text.empty() || pattern.size() > text.size()){
-        return pos;
-    }
-    for(size_t i{0}; i + pattern.size() <= text.size(); i++){
-        if(match_at(text, i, pattern)){
-            pos.push_back(i);
-        } 
+    if(pattern.empty() || text.empty() || pattern.size() > text.size()) return pos;
+    for(size_t i=0; i + pattern.size() <= text.size(); ++i){
+        if(match_at(text, i, pattern)) pos.push_back(i);
     }
     return pos;
 }
 
-//ADN basico
+//============= ADN básico (comp, revcomp) ==========
 inline char comp(char b){
     switch(b){
-        case 'A': return 'T';
-        case 'T': return 'A';
-        case 'C': return 'G';
-        case 'G': return 'C';
-        default: return 'N';
+        case 'A': return 'T'; case 'T': return 'A';
+        case 'C': return 'G'; case 'G': return 'C';
+        default:  return 'N';
     }
 }
-
 string revcomp(const string& s){
-    string rc;
-    rc.resize(s.size());
-    for(size_t i {0}, n = s.size(); i < n; ++i){
-        rc[n - 1 - i] = comp(s[i]);
-    }
+    string rc; rc.resize(s.size());
+    for(size_t i=0, n=s.size(); i<n; ++i) rc[n-1-i] = comp(s[i]);
     return rc;
 }
 
-//Palindromo rev-comp mas largo: solo centros pares (i, i+1)
+//============= Palíndromo rev-comp (centros pares) =========
 pair<size_t,size_t> longest_revcomp_palindrome(const string& s){
-    auto eq_comp = [&](char a, char b){
-        return comp(a) == b;
-    };
+    auto eq_comp = [&](char a, char b){ return comp(a) == b; };
     size_t bestL = 0, bestR = 0;
-    if(s.size() < 2){
-        return {0,0};
-    }
-    for(size_t i{0}; i + 1 < s.size(); ++i){
-        long long L = (long long)i, R = (long long) i + 1;
-        while(L >= 0 && (size_t)R < s.size() && eq_comp(s[(size_t)L], s[(size_t)R])){
-            if((size_t)(R - L) > (bestR - bestL)) {
-                bestL = (size_t)L;
-                bestR = (size_t)R;
-            }
-            --L;
-            ++R; // expandimos hacia afuera
+    if(s.size() < 2) return {0,0};
+    for(size_t i=0; i+1<s.size(); ++i){
+        long long L = (long long)i, R = (long long)i + 1;
+        while(L>=0 && (size_t)R<s.size() && eq_comp(s[(size_t)L], s[(size_t)R])){
+            if((size_t)(R-L) > (bestR-bestL)){ bestL=(size_t)L; bestR=(size_t)R; }
+            --L; ++R;
         }
     }
-    return {bestL, bestR}; //si no hay, devuelve [0,0]
+    return {bestL, bestR};
 }
 
-//=====Codigo genetico y traduccion
+// Palíndromo "directo" (
+pair<size_t,size_t> longest_direct_palindrome(const string& s){
+    if (s.empty()) return {0,0};
+    size_t bestL = 0, bestR = 0;
 
-// 1) Tabla del código genético
+    auto expand = [&](long long L, long long R){
+        while (L >= 0 && (size_t)R < s.size() && s[(size_t)L] == s[(size_t)R]){
+            if ((size_t)(R - L) > (bestR - bestL)){ bestL = (size_t)L; bestR = (size_t)R; }
+            --L; ++R;
+        }
+    };
+
+    // centros impares y pares
+    for (size_t i = 0; i < s.size(); ++i){
+        expand((long long)i, (long long)i);         // impar
+        if (i + 1 < s.size()) expand((long long)i, (long long)i + 1); // par
+    }
+    return {bestL, bestR};
+}
+
+
+//============= Código genético y traducción =========
 static const unordered_map<string, char> GENETIC_CODE = {
     {"TTT",'F'},{"TTC",'F'},{"TTA",'L'},{"TTG",'L'},
     {"TCT",'S'},{"TCC",'S'},{"TCA",'S'},{"TCG",'S'},
@@ -233,17 +208,12 @@ static const unordered_map<string, char> GENETIC_CODE = {
     {"GAT",'D'},{"GAC",'D'},{"GAA",'E'},{"GAG",'E'},
     {"GGT",'G'},{"GGC",'G'},{"GGA",'G'},{"GGG",'G'}
 };
-
-// 2) Traduce un marco (definida ANTES de usarla abajo)
 string translate_frame(const string& dna, size_t frame, bool until_stop=false){
     string aa;
     if (frame>2 || dna.size() < frame+3) return aa;
     aa.reserve(dna.size()/3);
     for(size_t i=frame; i+2<dna.size(); i+=3){
-        string codon; 
-        codon.push_back(dna[i]); 
-        codon.push_back(dna[i+1]); 
-        codon.push_back(dna[i+2]);
+        string codon; codon.push_back(dna[i]); codon.push_back(dna[i+1]); codon.push_back(dna[i+2]);
         auto it = GENETIC_CODE.find(codon);
         char c = (it==GENETIC_CODE.end()) ? 'X' : it->second;
         if (until_stop && c=='*') break;
@@ -251,8 +221,6 @@ string translate_frame(const string& dna, size_t frame, bool until_stop=false){
     }
     return aa;
 }
-
-// 3) Usa translate_frame para dar los 3 marcos forward y reverse
 array<string,3> translate_3_frames_forward(const string& dna){
     return { translate_frame(dna,0,false),
              translate_frame(dna,1,false),
@@ -265,13 +233,12 @@ array<string,3> translate_3_frames_reverse(const string& dna){
              translate_frame(rc,2,false) };
 }
 
-// buscar AA en el genoma (6 marcos) y mapear a nt
+//============= Buscar AA en el genoma (6 marcos) =========
 struct HitAA{
-    bool reverse; 
-    int frame;
-    size_t aa_pos; 
-    size_t nt_start; 
-    size_t nt_end; // inclusive
+    bool reverse;  // 0=fwd, 1=rev
+    int frame;     // 0,1,2
+    size_t aa_pos; // índice AA en la proteína traducida
+    size_t nt_start, nt_end; // mapeo en nt
 };
 vector<HitAA> find_protein_in_genome(const string& genome, const string& aa_pattern){
     vector<HitAA> hits;
@@ -289,9 +256,13 @@ vector<HitAA> find_protein_in_genome(const string& genome, const string& aa_patt
             }
         }
     }
-    // reverse
+    // reverse (reusa una vez el rc)
     string rc = revcomp(genome);
-    auto rev = translate_3_frames_reverse(genome); // usa rc internamente
+    auto rev = array<string,3>{
+        translate_frame(rc,0,false),
+        translate_frame(rc,1,false),
+        translate_frame(rc,2,false)
+    };
     for(int f=0; f<3; ++f){
         auto occ = naive_search_all(rev[(size_t)f], aa_pattern);
         for(size_t p: occ){
@@ -310,43 +281,154 @@ vector<HitAA> find_protein_in_genome(const string& genome, const string& aa_patt
     return hits;
 }
 
-//===============Menus
-void menu_find_gene(){
-    cout << "\n[1] Buscar gen en el genoma (búsqueda naive propia)\n";
-    cout << "   Gen: 1) M  2) ORF1ab  3) S  -> " << flush;
-    int op; 
-    if(!(cin >> op)){ cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); cout << "   Entrada inválida.\n"; return; }
-
-    const string* gene = nullptr;
-    string gname;
-    if (op == 1)      { gene = &DB.gene_M;      gname = "M"; }
-    else if (op == 2) { gene = &DB.gene_ORF1ab; gname = "ORF1ab"; }
-    else if (op == 3) { gene = &DB.gene_S;      gname = "S"; }
-    else { cout << "   Opción inválida.\n"; return; }
-
-    cout << "   Genoma: 1) Wuhan 2019  2) Texas 2020  -> " << flush;
-    int gg; 
-    if(!(cin >> gg)){ cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); cout << "   Entrada inválida.\n"; return; }
-
-    const string* genome = (gg==2) ? &DB.genome_texas : &DB.genome_wuhan;
-    string glabel = (gg==2) ? "Texas 2020" : "Wuhan 2019";
-
-    auto occ = naive_search_all(*genome, *gene);
-    if (occ.empty()){
-        cout << "   No se encontró el gen " << gname << " en " << glabel << ".\n";
-        return;
+//============= Diff Wuhan vs Texas (SNP/INDEL greedy) ========
+struct DiffEvent {
+    enum Kind { SNP, DEL, INS } kind;
+    size_t posA;   // índice en Wuhan
+    size_t posB;   // índice en Texas
+    string a;      // en Wuhan (1 base para SNP, k para DEL)
+    string b;      // en Texas (1 base para SNP, k para INS)
+};
+static inline bool kmatch(const string& A, size_t ai, const string& B, size_t bj, size_t k){
+    if (ai + k > A.size() || bj + k > B.size()) return false;
+    for (size_t t=0; t<k; ++t) if (A[ai+t] != B[bj+t]) return false;
+    return true;
+}
+static vector<DiffEvent> compare_genomes_anchored(const string& A, const string& B,
+                                                  size_t k = 12, size_t L = 200){
+    vector<DiffEvent> ev;
+    size_t i = 0, j = 0;
+    while (i < A.size() && j < B.size()){
+        if (A[i] == B[j]) { ++i; ++j; continue; }
+        if (i+1 < A.size() && j+1 < B.size() && A[i+1] == B[j+1]){
+            ev.push_back({DiffEvent::SNP, i, j, string(1, A[i]), string(1, B[j])});
+            ++i; ++j; continue;
+        }
+        size_t best_del = SIZE_MAX, best_ins = SIZE_MAX;
+        for (size_t a = 1; a <= L && i + a + k <= A.size(); ++a){
+            if (kmatch(A, i + a, B, j, k)){ best_del = a; break; }
+        }
+        for (size_t b = 1; b <= L && j + b + k <= B.size(); ++b){
+            if (kmatch(A, i, B, j + b, k)){ best_ins = b; break; }
+        }
+        if (best_del == SIZE_MAX && best_ins == SIZE_MAX){
+            ev.push_back({DiffEvent::SNP, i, j, string(1, A[i]), string(1, B[j])});
+            ++i; ++j;
+        } else if (best_ins == SIZE_MAX || (best_del < best_ins)){
+            ev.push_back({DiffEvent::DEL, i, j, A.substr(i, best_del), ""});
+            i += best_del;
+        } else {
+            ev.push_back({DiffEvent::INS, i, j, "", B.substr(j, best_ins)});
+            j += best_ins;
+        }
     }
-    cout << "   Ocurrencias del gen " << gname << " en " << glabel << " (índices 0-based):\n";
-    for(size_t i=0;i<occ.size();++i){
-        cout << "   - inicio: " << occ[i]
-             << "  fin: " << (occ[i] + gene->size() - 1) << "\n";
+    if (i < A.size()) ev.push_back({DiffEvent::DEL, i, j, A.substr(i), ""});
+    if (j < B.size()) ev.push_back({DiffEvent::INS, i, j, "", B.substr(j)});
+    return ev;
+}
+
+//============= Impacto de SNP en AA + frameshift ========
+struct AAImpact {
+    string gene;
+    size_t nt_pos;      // posición nt en Wuhan
+    size_t codon_index; // índice de codón relativo al inicio del gen
+    string ref_codon, alt_codon;
+    char ref_aa, alt_aa;
+};
+static inline char aa_from_codon(const string& codon){
+    auto it = GENETIC_CODE.find(codon);
+    return (it==GENETIC_CODE.end()) ? 'X' : it->second;
+}
+vector<AAImpact> aa_impacts_for_gene(const string& wuhan,
+                                     const vector<DiffEvent>& ev,
+                                     const string& gene_seq,
+                                     const string& gene_name){
+    vector<AAImpact> out;
+    auto occ = naive_search_all(wuhan, gene_seq);
+    if (occ.empty()) return out;
+    size_t s = occ[0]; // inicio del gen en Wuhan
+    string mutated = gene_seq;
+
+    // aplica SOLO SNPs dentro del gen (INDEL se trata aparte)
+    for (const auto& e : ev){
+        if (e.kind != DiffEvent::SNP) continue;
+        if (e.posA < s || e.posA >= s + gene_seq.size()) continue;
+        mutated[e.posA - s] = e.b[0];
+    }
+    size_t codons = min(gene_seq.size(), mutated.size()) / 3;
+    for (size_t i = 0; i < codons; ++i){
+        string c_ref = gene_seq.substr(3*i,3);
+        string c_alt = mutated.substr(3*i,3);
+        if (c_ref == c_alt) continue;
+        char a_ref = aa_from_codon(c_ref);
+        char a_alt = aa_from_codon(c_alt);
+        if (a_ref != a_alt){
+            out.push_back({gene_name, s + 3*i, i, c_ref, c_alt, a_ref, a_alt});
+        }
+    }
+    return out;
+}
+void warn_frameshift_in_gene(const vector<DiffEvent>& ev,
+                             size_t gene_start, size_t gene_end,
+                             const string& gname){
+    for (const auto& d : ev){
+        if (d.posA < gene_start || d.posA > gene_end) continue;
+        if (d.kind == DiffEvent::DEL){
+            if (d.a.size() % 3 != 0)
+                cout << "   [Frameshift] " << gname << " DEL no múltiplo de 3 en nt@" << d.posA << "\n";
+        } else if (d.kind == DiffEvent::INS){
+            if (d.b.size() % 3 != 0)
+                cout << "   [Frameshift] " << gname << " INS no múltiplo de 3 en nt@" << d.posA << "\n";
+        }
     }
 }
 
+//=============== Menús ===============
+void menu_find_gene(){
+    cout << "\n[1] Índices de M/ORF1ab/S en Wuhan y Texas (primeros 12 nt)\n";
+
+    auto print_for = [&](const string& label, const string& genome){
+        cout << "== " << label << " ==\n";
+        if (genome.empty()){
+            cout << "   Error: genoma " << label << " no está cargado.\n";
+            return;
+        }
+
+        struct GeneRow { string name; const string* seq; };
+        vector<GeneRow> genes = {
+            {"M",      &DB.gene_M},
+            {"ORF1ab", &DB.gene_ORF1ab},
+            {"S",      &DB.gene_S}
+        };
+
+        for (const auto& g : genes){
+            if (g.seq->empty()){
+                cout << "Gen " << g.name << ": secuencia del gen vacía.\n";
+                continue;
+            }
+            auto occ = naive_search_all(genome, *g.seq);
+            if (occ.empty()){
+                cout << "Gen " << g.name << ": no encontrado en " << label << ".\n";
+                continue;
+            }
+            size_t idx = occ[0];
+            string first12 = (idx + 12 <= genome.size()) ? genome.substr(idx, 12) : "";
+            cout << "Gen " << g.name << ":\n";
+            cout << "  Índice: " << idx
+                 << ", Primeros 12 nt: " << first12 << "\n";
+        }
+    };
+
+    print_for("Wuhan 2019", DB.genome_wuhan);
+    print_for("Texas 2020", DB.genome_texas);
+}
+
+
 void menu_longest_palindrome(){
-    cout << "\n[2] Palíndromo (complemento inverso) más largo dentro de un gen\n";
+    cout << "\n[2] Palíndromo más largo en un gen (elige rev-comp o directo)\n";
     cout << "   Gen: 1) M  2) ORF1ab  3) S  -> " << flush;
-    int op; if(!(cin >> op)){ cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); cout<<"   Entrada inválida.\n"; return; }
+    int op; 
+    if(!(cin >> op)){ cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); cout<<"   Entrada inválida.\n"; return; }
 
     const string* gene = nullptr; string gname;
     if (op==1){ gene=&DB.gene_M; gname="M"; }
@@ -354,24 +436,42 @@ void menu_longest_palindrome(){
     else if (op==3){ gene=&DB.gene_S; gname="S"; }
     else { cout << "   Opción inválida.\n"; return; }
 
-    auto LR = longest_revcomp_palindrome(*gene);
-    size_t L = LR.first, R = LR.second;
-    if (R <= L){ cout << "   No se detectó palíndromo rev-comp no trivial.\n"; return; }
+    cout << "   Tipo: 1) Rev-Comp  2) Directo  -> " << flush;
+    int tipo;
+    if(!(cin >> tipo)){ cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); cout<<"   Entrada inválida.\n"; return; }
 
-    cout << "   Gen " << gname << " → mejor palíndromo (rev-comp)\n";
-    cout << "   L=" << L << "  R=" << R << "  (longitud=" << (R - L + 1) << ")\n";
+    pair<size_t,size_t> LR;
+    string label;
 
-    string pal = gene->substr(L, R - L + 1);
-    for(size_t i=0; i<pal.size(); i+=60)
-        cout << "   " << pal.substr(i, min<size_t>(60, pal.size()-i)) << "\n";
+    if (tipo == 2){
+        label = "palíndromo DIRECTO";
+        LR = longest_direct_palindrome(*gene);
+        size_t L = LR.first, R = LR.second;
+        if (R <= L){ cout << "   No se detectó palíndromo directo no trivial.\n"; return; }
+        if (R - L + 1 < 2){ cout << "   No se detectó palíndromo directo no trivial.\n"; return; }
+        cout << "   Gen " << gname << " → mejor " << label << "\n";
+        cout << "   L=" << L << "  R=" << R << "  (longitud=" << (R - L + 1) << ")\n";
+        string pal = gene->substr(L, R - L + 1);
+        for(size_t i=0; i<pal.size(); i+=60)
+            cout << "   " << pal.substr(i, min<size_t>(60, pal.size()-i)) << "\n";
+    } else {
+        label = "palíndromo REV-COMP";
+        LR = longest_revcomp_palindrome(*gene);
+        size_t L = LR.first, R = LR.second;
+        if (R <= L){ cout << "   No se detectó palíndromo rev-comp no trivial.\n"; return; }
+        cout << "   Gen " << gname << " → mejor " << label << "\n";
+        cout << "   L=" << L << "  R=" << R << "  (longitud=" << (R - L + 1) << ")\n";
+        string pal = gene->substr(L, R - L + 1);
+        for(size_t i=0; i<pal.size(); i+=60)
+            cout << "   " << pal.substr(i, min<size_t>(60, pal.size()-i)) << "\n";
+    }
 }
 
-// --- Traducción de un gen a proteína (6 marcos)
+
 void menu_translate_gene(){
     cout << "\n[3] Traducir un gen a proteína (6 marcos)\n";
     cout << "   Gen: 1) M  2) ORF1ab  3) S  -> " << flush;
     int op; if(!(cin >> op)){ cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); cout<<"   Entrada inválida.\n"; return; }
-
     const string* gene = nullptr; string gname;
     if (op==1){ gene=&DB.gene_M; gname="M"; }
     else if (op==2){ gene=&DB.gene_ORF1ab; gname="ORF1ab"; }
@@ -380,13 +480,11 @@ void menu_translate_gene(){
 
     auto fwd = translate_3_frames_forward(*gene);
     auto rev = translate_3_frames_reverse(*gene);
-
     auto printAA = [&](const string& label, const string& aa){
         cout << "   " << label << " | len=" << aa.size() << "\n";
         for(size_t i=0; i<aa.size(); i+=60)
             cout << "   " << aa.substr(i, min<size_t>(60, aa.size()-i)) << "\n";
     };
-
     cout << "   Proteínas candidatas por marco:\n";
     printAA("FW frame 0", fwd[0]);
     printAA("FW frame 1", fwd[1]);
@@ -394,15 +492,10 @@ void menu_translate_gene(){
     printAA("RV frame 0", rev[0]);
     printAA("RV frame 1", rev[1]);
     printAA("RV frame 2", rev[2]);
-
-    cout << "   Tip: el marco “real” tiende a comenzar en ATG y tener pocos '*'.\n";
 }
 
-// [4] Buscar proteína AA en el genoma (6 marcos), con ingreso por secuencia o por nombre
 void menu_find_protein_in_genome(){
     cout << "\n[4] Buscar una proteína (AA) en el GENOMA (6 marcos)\n";
-
-    // Si hay base de proteínas, damos opción de pegar AA o elegir por nombre
     int mode = 1;
     if (!DB.proteins.empty()){
         cout << "   ¿Cómo quieres ingresar la proteína?\n";
@@ -414,14 +507,9 @@ void menu_find_protein_in_genome(){
             cout << "   Entrada inválida.\n"; return;
         }
     }
-
-    string aa;           // secuencia AA elegida
-    string chosen_name;  // nombre (si se eligió por lista)
-
+    string aa; string chosen_name;
     if (mode == 2 && !DB.proteins.empty()){
-        // --- flujo por NOMBRE ---
-        cout << "   Mostrar primeros 20? (y/n): ";
-        char yn; cin >> yn;
+        cout << "   Mostrar primeros 20? (y/n): "; char yn; cin >> yn;
         if (yn=='y' || yn=='Y'){
             size_t lim = min<size_t>(20, DB.proteins.size());
             for(size_t i=0;i<lim;++i)
@@ -430,18 +518,14 @@ void menu_find_protein_in_genome(){
         }
         cout << "   Escribe un INDICE o parte del nombre: ";
         string token; cin >> token;
-
         bool ok = false;
         if (is_digits(token)){
             size_t idx = (size_t)stoull(token);
             if (idx < DB.proteins.size()){
-                aa = DB.proteins[idx].aa;
-                chosen_name = DB.proteins[idx].name;
-                ok = true;
+                aa = DB.proteins[idx].aa; chosen_name = DB.proteins[idx].name; ok = true;
             }
         }
         if (!ok){
-            // búsqueda por substring (case-insensitive)
             string q = upper_copy(token);
             vector<size_t> matches;
             for(size_t i=0;i<DB.proteins.size();++i){
@@ -449,11 +533,7 @@ void menu_find_protein_in_genome(){
                 if (up.find(q) != string::npos) matches.push_back(i);
             }
             if (matches.empty()){ cout << "   Nombre no encontrado.\n"; return; }
-
-            if (matches.size() > 20){
-                cout << "   " << matches.size() << " coincidencias, muestro primeras 20:\n";
-                matches.resize(20);
-            }
+            if (matches.size() > 20){ cout << "   " << matches.size() << " coincidencias, muestro primeras 20:\n"; matches.resize(20); }
             for(size_t k=0;k<matches.size();++k){
                 size_t i = matches[k];
                 cout << "   [" << i << "] " << DB.proteins[i].name
@@ -464,25 +544,18 @@ void menu_find_protein_in_genome(){
             if (!is_digits(idxs)){ cout << "   Entrada inválida.\n"; return; }
             size_t idx = (size_t)stoull(idxs);
             if (idx >= DB.proteins.size()){ cout << "   Índice fuera de rango.\n"; return; }
-            aa = DB.proteins[idx].aa;
-            chosen_name = DB.proteins[idx].name;
+            aa = DB.proteins[idx].aa; chosen_name = DB.proteins[idx].name;
         }
     } else {
-        // --- flujo pegando SEC. AA ---
         cout << "   Escribe la SECUENCIA de AA (A-Z, '*' si quieres):\n";
         string raw; cin >> raw;
         aa = only_AA(raw);
         if (aa.empty()){ cout << "   Secuencia vacía o inválida.\n"; return; }
-        if (aa.size() < 6)
-            cout << "   Aviso: secuencia muy corta, puede haber muchos falsos negativos.\n";
+        if (aa.size() < 6) cout << "   Aviso: secuencia muy corta, puede haber muchos falsos negativos.\n";
     }
-
     cout << "   Genoma: 1) Wuhan 2019  2) Texas 2020  -> " << flush;
     int gg; 
-    if(!(cin >> gg)){ 
-        cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); 
-        cout<<"   Entrada inválida.\n"; return; 
-    }
+    if(!(cin >> gg)){ cin.clear(); cin.ignore(numeric_limits<streamsize>::max(), '\n'); cout<<"   Entrada inválida.\n"; return; }
     const string* genome = (gg==2) ? &DB.genome_texas : &DB.genome_wuhan;
     string glabel = (gg==2) ? "Texas 2020" : "Wuhan 2019";
 
@@ -492,18 +565,21 @@ void menu_find_protein_in_genome(){
              << " no se encontró en " << glabel << ".\n";
         return;
     }
-
     cout << "   " << (chosen_name.empty()? "Secuencia" : "("+chosen_name+")")
          << " hallada en " << glabel << ": " << hits.size() << " ocurrencias\n";
+    string aa4 = (aa.size()>=4 ? aa.substr(0,4) : aa);
     for(const auto& h: hits){
+        string nt12 = (h.nt_start+12<=genome->size()? genome->substr(h.nt_start,12) : "");
         cout << "   - " << (h.reverse ? "REV" : "FWD")
              << " frame " << h.frame
              << " | nt[" << h.nt_start << "," << h.nt_end << "]"
-             << " | aa_pos=" << h.aa_pos << "\n";
+             << " | aa_pos=" << h.aa_pos
+             << " | 4AA=" << aa4
+             << " | nt12=" << nt12
+             << "\n";
     }
 }
 
-// [5] Buscar proteína por NOMBRE (usa seq-proteins.txt)
 void menu_find_protein_by_name(){
     if (DB.proteins.empty()){
         cout << "\n[5] Buscar proteína por nombre\n";
@@ -560,20 +636,83 @@ void menu_find_protein_by_name(){
         return;
     }
     cout << "   (" << chosen << ") hallada en " << glabel << ": " << hits.size() << " ocurrencias\n";
+    string aa4 = (aa.size()>=4 ? aa.substr(0,4) : aa);
     for (const auto& h : hits) {
+        string nt12 = (h.nt_start+12<=genome->size()? genome->substr(h.nt_start,12) : "");
         cout << "   - " << (h.reverse ? "REV" : "FWD") 
              << " frame " << h.frame 
              << " | nt[" << h.nt_start << "," << h.nt_end << "]"
-             << " | aa_pos=" << h.aa_pos << "\n";
+             << " | aa_pos=" << h.aa_pos
+             << " | 4AA=" << aa4
+             << " | nt12=" << nt12
+             << "\n";
     }
 }
 
+void menu_compare_genomes_snps(){
+    cout << "\n[6] Comparar Wuhan 2019 vs Texas 2020 (SNPs / INDELs)\n";
+    const string& A = DB.genome_wuhan; // Wuhan
+    const string& B = DB.genome_texas; // Texas
+    if (A.empty() || B.empty()){ cout << "   Error: algún genoma no está cargado.\n"; return; }
 
+    auto ev = compare_genomes_anchored(A, B, /*k=*/12, /*L=*/200);
+
+    size_t snp = 0, del_events = 0, ins_events = 0, del_bases = 0, ins_bases = 0;
+    for (const auto& e : ev){
+        if (e.kind == DiffEvent::SNP) snp++;
+        else if (e.kind == DiffEvent::DEL){ del_events++; del_bases += e.a.size(); }
+        else if (e.kind == DiffEvent::INS){ ins_events++; ins_bases += e.b.size(); }
+    }
+    cout << "   Wuhan len=" << A.size() << " | Texas len=" << B.size() << "\n";
+    cout << "   SNPs: " << snp
+         << " | DEL eventos: " << del_events << " (bases=" << del_bases << ")"
+         << " | INS eventos: " << ins_events << " (bases=" << ins_bases << ")\n";
+
+    size_t show = min<size_t>(50, ev.size());
+    if (show == 0){ cout << "   No se encontraron diferencias.\n"; return; }
+    cout << "   Primeros " << show << " eventos:\n";
+    for (size_t k = 0; k < show; ++k){
+        const auto& e = ev[k];
+        if (e.kind == DiffEvent::SNP){
+            cout << "   SNP  @Wuhan:" << e.posA << " | " << e.a << " -> " << e.b << "\n";
+        } else if (e.kind == DiffEvent::DEL){
+            cout << "   DEL  @Wuhan:" << e.posA << " | '" << e.a << "' (len=" << e.a.size() << ")\n";
+        } else {
+            cout << "   INS  @Wuhan:" << e.posA << " | Texas tiene '" << e.b
+                 << "' (len=" << e.b.size() << ")\n";
+        }
+    }
+
+    // Impacto AA por SNP dentro de M / ORF1ab / S
+    auto impM   = aa_impacts_for_gene(A, ev, DB.gene_M,      "M");
+    auto impORF = aa_impacts_for_gene(A, ev, DB.gene_ORF1ab, "ORF1ab");
+    auto impS   = aa_impacts_for_gene(A, ev, DB.gene_S,      "S");
+    auto printImp = [&](const vector<AAImpact>& v){
+        for (const auto& x: v){
+            cout << "   " << x.gene
+                 << " nt@" << x.nt_pos
+                 << " codon#" << x.codon_index
+                 << " " << x.ref_codon << "(" << x.ref_aa << ") -> "
+                 << x.alt_codon << "(" << x.alt_aa << ")\n";
+        }
+    };
+    size_t totalAA = impM.size() + impORF.size() + impS.size();
+    cout << "   Cambios de aminoácido por SNP dentro de genes (aprox): "
+         << totalAA << "\n";
+    printImp(impM); printImp(impORF); printImp(impS);
+
+    // Avisos frameshift por INDEL no múltiplo de 3
+    auto occM   = naive_search_all(A, DB.gene_M);
+    auto occORF = naive_search_all(A, DB.gene_ORF1ab);
+    auto occS   = naive_search_all(A, DB.gene_S);
+    if (!occM.empty())   warn_frameshift_in_gene(ev, occM[0],   occM[0] + DB.gene_M.size() - 1,      "M");
+    if (!occORF.empty()) warn_frameshift_in_gene(ev, occORF[0], occORF[0]+DB.gene_ORF1ab.size()-1,   "ORF1ab");
+    if (!occS.empty())   warn_frameshift_in_gene(ev, occS[0],   occS[0] + DB.gene_S.size() - 1,      "S");
+}
 
 // =============== MAIN ===============
 constexpr const char* DEFAULT_BASE =
 R"(C:\Users\rogie\OneDrive\Escritorio\Reto_Algoritmo)";
-
 
 int main(int argc, char** argv){
     ios::sync_with_stdio(false);
@@ -599,11 +738,12 @@ int main(int argc, char** argv){
 
         while(true){
             cout << "\n=========== MENU ===========\n";
-            cout << "1) Buscar un gen en el genoma\n";
-            cout << "2) Palíndromo rev-comp más largo en un gen\n";
+            cout << "1) Índices de M/ORF1ab/S en Wuhan y Texas (primeros 12 nt)\n";
+            cout << "2) Palíndromo (rev-comp o directo) más largo en un gen\n";
             cout << "3) Traducir un gen a proteína (6 marcos)\n";
             cout << "4) Buscar proteína (AA) en el genoma (6 marcos)\n";
             cout << "5) Buscar proteína por NOMBRE (seq-proteins.txt)\n";
+            cout << "6) Comparar Wuhan vs Texas (SNPs / INDELs)\n";
             cout << "0) Salir\n";
             cout << "Elige opción: " << flush;
 
@@ -620,9 +760,9 @@ int main(int argc, char** argv){
             else if(op==3) menu_translate_gene();
             else if(op==4) menu_find_protein_in_genome();
             else if(op==5) menu_find_protein_by_name();
+            else if(op==6) menu_compare_genomes_snps();
             else cout << "   Opción inválida.\n";
         }
-
     }catch(const exception& e){
         cerr << "[ERROR] " << e.what() << "\n";
         return 1;
