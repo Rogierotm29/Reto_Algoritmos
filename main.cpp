@@ -125,7 +125,7 @@ void load_all(const string& BASE){
     DB.proteins     = read_protein_fasta(existing_file(BASE, "seq-proteins"));
 }
 
-//============= Búsqueda Naive (propia) =============
+//============= Búsqueda Naive =============
 inline bool match_at (const string& text, size_t i, const string& pattern){
     if (i + pattern.size() > text.size()) return false;
     for(size_t k=0; k<pattern.size(); ++k){
@@ -142,7 +142,7 @@ vector<size_t> naive_search_all(const string& text, const string& pattern){
     return pos;
 }
 
-// <=k desmatches (por si usas luego)
+// <=k desmatches 
 static vector<size_t> kmm_search(const string& text, const string& pat, size_t kmax){
     vector<size_t> out;
     if(pat.empty() || text.size() < pat.size()) return out;
@@ -396,7 +396,7 @@ void warn_frameshift_in_gene(const vector<DiffEvent>& ev,
     }
 }
 
-// ======== ORF1ab frameshift-aware (simplificado) =========
+// ======== ORF1ab frameshift-aware =========
 struct Orf1abHit { size_t aa_pos; size_t nt_start; size_t nt_end; bool crosses; size_t mism; };
 static vector<Orf1abHit> find_in_orf1ab_fs(const string& genome, const string& aa){
     vector<Orf1abHit> hits;
@@ -448,7 +448,7 @@ static vector<Orf1abHit> find_in_orf1ab_fs(const string& genome, const string& a
     return hits;
 }
 
-// ======== util de impresión compacta para proteínas ========
+// ======== impresión compacta para proteínas ========
 struct SimpleProtHit {
     bool found=false;
     size_t nt_start=0;
@@ -477,7 +477,7 @@ static SimpleProtHit summarize_fs_hit(const string& genome, const string& aa, co
     return r;
 }
 
-// ======== Impresiones sin menús ========
+// ======== Impresiones ========
 static void print_gene_indices_for(const string& label, const string& genome){
     cout << "== " << label << " ==\n";
     if (genome.empty()){
